@@ -79,10 +79,9 @@
       .dot.blue { background: var(--blue); }
 
       .canvas-panel { position: relative; overflow: hidden; }
-      /* Only the main plot gets large height */
-      #plot { width: 100%; height: min(70vh, 720px); display: block; background: #fff; border-radius: 10px; border: 1px solid var(--border); }
-      /* Network diagram canvas in the sidebar */
-      #net { width: 100%; height: 260px; display: block; background: #fff; border-radius: 10px; border: 1px solid var(--border); }
+      canvas { width: 100%; height: min(70vh, 720px); display: block; background: #fff; border-radius: 10px; border: 1px solid var(--border); }
+      /* Smaller fixed-height canvas for network diagram */
+      canvas.net-canvas { height: 220px; }
       .caption { font-size: 12px; color: var(--muted); margin-top: 8px; }
     </style>
   </head>
@@ -169,11 +168,6 @@
           <button id="resetModel">Reset Model</button>
           <button id="applyArch">Apply Architecture</button>
         </div>
-
-        <hr style="border:none;border-top:1px solid var(--border);margin:14px 0;" />
-        <h2>Network</h2>
-        <canvas id="net" width="600" height="400" aria-label="Network graph"></canvas>
-        <div class="caption">Lines: red=positive, blue=negative; thickness∝|weight|.</div>
       </section>
 
       <section class="panel canvas-panel">
@@ -185,6 +179,11 @@
             <span style="margin-left:12px">Loss: <strong id="lossOut">–</strong></span>
             <span style="margin-left:12px">Acc: <strong id="accOut">–</strong></span>
           </div>
+        </div>
+
+        <canvas id="net" class="net-canvas" width="1200" height="300" aria-label="Network diagram"></canvas>
+        <div class="caption">
+          Network graph (red = positive weight, blue = negative; thickness ∝ |w|). Large layers show top-weighted connections to reduce clutter.
         </div>
       </section>
     </main>
@@ -563,78 +562,6 @@
       let step = 0;
       let lossEMA = null;
 
-      function drawNetwork(canvas, model) {
-        if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        const dpr = setupHiDPI(canvas);
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        if (!model) return;
-
-        const sizes = model.sizes || [2, 1];
-        const L = sizes.length;
-        const padX = 18 * dpr;
-        const padY = 12 * dpr;
-        const W = canvas.width - 2 * padX;
-        const H = canvas.height - 2 * padY;
-        const maxNodes = Math.max(...sizes);
-        const baseR = Math.max(3 * dpr, Math.min(10 * dpr, H / (2 * maxNodes + 6)));
-
-        const layersX = new Array(L).fill(0).map((_, l) => padX + (L === 1 ? W / 2 : (W * l) / (L - 1)));
-        const nodePos = [];
-        for (let l = 0; l < L; l++) {
-          const n = sizes[l];
-          const gap = H / (n + 1);
-          const xs = layersX[l];
-          const ys = new Array(n).fill(0).map((_, i) => padY + gap * (i + 1));
-          nodePos[l] = ys.map(y => ({ x: xs, y }));
-        }
-
-        // Draw edges with color by sign and thickness by magnitude
-        ctx.lineCap = 'round';
-        for (let l = 0; l < L - 1; l++) {
-          const Wl = model.W[l]; // shape [fanOut][fanIn]
-          // find max |w| for this layer for normalization
-          let maxAbs = 0;
-          for (let i = 0; i < Wl.length; i++) {
-            for (let j = 0; j < Wl[i].length; j++) maxAbs = Math.max(maxAbs, Math.abs(Wl[i][j]));
-          }
-          const denom = maxAbs > 0 ? maxAbs : 1;
-          for (let i = 0; i < Wl.length; i++) {
-            const to = nodePos[l + 1][i];
-            for (let j = 0; j < Wl[i].length; j++) {
-              const from = nodePos[l][j];
-              const w = Wl[i][j];
-              const norm = Math.min(1, Math.abs(w) / denom);
-              const width = (0.5 + 2.5 * norm) * dpr;
-              ctx.lineWidth = width;
-              const isPos = w >= 0;
-              ctx.strokeStyle = isPos ? '#e11d48' : '#2563eb';
-              ctx.globalAlpha = 0.25 + 0.65 * norm;
-              ctx.beginPath();
-              ctx.moveTo(from.x, from.y);
-              ctx.lineTo(to.x, to.y);
-              ctx.stroke();
-            }
-          }
-        }
-        ctx.globalAlpha = 1;
-
-        // Draw nodes
-        for (let l = 0; l < L; l++) {
-          const n = sizes[l];
-          for (let i = 0; i < n; i++) {
-            const p = nodePos[l][i];
-            ctx.beginPath();
-            ctx.fillStyle = '#ffffff';
-            ctx.strokeStyle = '#cbd5e1';
-            ctx.lineWidth = 1.5 * dpr;
-            ctx.arc(p.x, p.y, baseR, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-          }
-        }
-      }
-
       function parseHiddenSizes() {
         const raw = (ui.hiddenSizes && ui.hiddenSizes.value || '').trim();
         if (!raw) return [];
@@ -654,7 +581,7 @@
         lossEMA = null;
         updateStatus(0, null, null);
         render(ui.plot, dataset, domain);
-        drawNetwork(ui.net, model);
+        renderNetwork(ui.net, model);
       }
 
       function readConfig() {
@@ -679,7 +606,6 @@
         domain = calcDomain(cfg);
         dataset = generateEncirclingDataset(cfg);
         render(ui.plot, dataset, domain);
-        drawNetwork(ui.net, model);
       }
 
       // event wiring
@@ -731,6 +657,111 @@
 
       function predictXY(x, y) { return model ? model.predict(x, y) : 0.5; }
 
+      function renderNetwork(canvas, model) {
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const dpr = setupHiDPI(canvas);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (!model) return;
+
+        const sizes = model.sizes;
+        const L = sizes.length;
+        const padX = 28 * dpr;
+        const padY = 20 * dpr;
+        const w = canvas.width - 2 * padX;
+        const h = canvas.height - 2 * padY;
+
+        // Node positions
+        const maxNodes = Math.max(...sizes);
+        const colStep = L > 1 ? w / (L - 1) : 0;
+        const pos = new Array(L);
+        for (let l = 0; l < L; l++) {
+          const n = sizes[l];
+          const x = padX + l * colStep;
+          const rowStep = n > 1 ? h / (n - 1) : 0;
+          pos[l] = new Array(n);
+          for (let i = 0; i < n; i++) {
+            const y = padY + (n > 1 ? i * rowStep : h / 2);
+            pos[l][i] = { x, y };
+          }
+        }
+
+        // Edge drawing with per-layer normalization; optionally top-K for large layers
+        ctx.lineCap = 'round';
+        for (let l = 0; l < L - 1; l++) {
+          const fanIn = sizes[l];
+          const fanOut = sizes[l + 1];
+          const Wl = model.W[l];
+          let maxAbs = 0;
+          for (let i = 0; i < fanOut; i++) {
+            for (let j = 0; j < fanIn; j++) maxAbs = Math.max(maxAbs, Math.abs(Wl[i][j]));
+          }
+          if (maxAbs === 0) maxAbs = 1e-6;
+
+          const largeLayer = fanIn * fanOut > 8000 || fanIn > 64 || fanOut > 64;
+          const topK = largeLayer ? 8 : null;
+
+          for (let i = 0; i < fanOut; i++) {
+            let indices = [...Array(fanIn).keys()];
+            if (topK) {
+              indices.sort((a, b) => Math.abs(Wl[i][b]) - Math.abs(Wl[i][a]));
+              indices = indices.slice(0, topK);
+            }
+            for (const j of indices) {
+              const wgt = Wl[i][j];
+              const mag = Math.abs(wgt) / maxAbs;
+              const thick = (0.6 + 2.8 * mag) * dpr;
+              const alpha = 0.15 + 0.75 * mag;
+              ctx.strokeStyle = wgt >= 0 ? `rgba(225,29,72,${alpha.toFixed(3)})` : `rgba(37,99,235,${alpha.toFixed(3)})`;
+              ctx.lineWidth = thick;
+              const a = pos[l][j];
+              const b = pos[l + 1][i];
+              ctx.beginPath();
+              ctx.moveTo(a.x, a.y);
+              ctx.lineTo(b.x, b.y);
+              ctx.stroke();
+            }
+          }
+        }
+
+        // Nodes (bias tint on hidden/output)
+        const r = Math.max(4 * dpr, Math.min(12 * dpr, Math.floor((160 * dpr) / Math.max(3, maxNodes))));
+        for (let l = 0; l < L; l++) {
+          const n = sizes[l];
+          const hasBias = l > 0; // input layer has no bias in our model storage
+          let maxAbsB = 0;
+          if (hasBias) for (let i = 0; i < n; i++) maxAbsB = Math.max(maxAbsB, Math.abs(model.b[l - 1][i] || 0));
+          if (maxAbsB === 0) maxAbsB = 1e-6;
+          for (let i = 0; i < n; i++) {
+            const p = pos[l][i];
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+            if (hasBias) {
+              const bval = model.b[l - 1][i] || 0;
+              const mag = Math.min(1, Math.abs(bval) / maxAbsB);
+              const alpha = 0.10 + 0.35 * mag;
+              const fill = bval >= 0 ? `rgba(225,29,72,${alpha.toFixed(3)})` : `rgba(37,99,235,${alpha.toFixed(3)})`;
+              ctx.fillStyle = fill;
+            } else {
+              ctx.fillStyle = '#ffffff';
+            }
+            ctx.fill();
+            ctx.lineWidth = 1.2 * dpr;
+            ctx.strokeStyle = '#94a3af';
+            ctx.stroke();
+          }
+        }
+
+        // Simple layer size labels at the top
+        ctx.fillStyle = '#6b7280';
+        ctx.font = `${12 * dpr}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto`;
+        ctx.textAlign = 'center';
+        for (let l = 0; l < L; l++) {
+          const x = pos[l][Math.floor(pos[l].length / 2)].x;
+          ctx.fillText(`${sizes[l]}`, x, padY - 6 * dpr);
+        }
+      }
+
       function trainTick() {
         if (!running || !model || !dataset.length) return;
         const lr = parseFloat(ui.lr.value);
@@ -746,7 +777,7 @@
         const acc = estimateAccuracy(256);
         updateStatus(step, lossEMA, acc);
         render(ui.plot, dataset, domain);
-        drawNetwork(ui.net, model);
+        renderNetwork(ui.net, model);
       }
 
       function animLoop() {
@@ -771,14 +802,13 @@
         if (e.code === 'Space') { e.preventDefault(); ui.startStop.click(); }
       });
 
-      window.addEventListener('resize', () => { regenerateAndRender(); drawNetwork(ui.net, model); });
+      window.addEventListener('resize', () => { regenerateAndRender(); renderNetwork(ui.net, model); });
       // initial draw
       regenerateAndRender();
       resetModel();
       ui.lrOut.textContent = parseFloat(ui.lr.value).toFixed(2);
       ui.spfOut.textContent = ui.stepsPerFrame.value;
       updateArchLabel(parseHiddenSizes());
-      drawNetwork(ui.net, model);
       requestAnimationFrame(animLoop);
     </script>
   </body>
