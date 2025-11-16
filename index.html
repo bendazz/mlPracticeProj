@@ -1,0 +1,785 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FFN Toy Dataset — Encircling Classes</title>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --panel: #f5f7fb;
+        --border: #e3e8f0;
+        --text: #111827;
+        --muted: #6b7280;
+        --accent: #2563eb;
+        --red: #e11d48;
+        --blue: #2563eb;
+      }
+
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica Neue, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        color: var(--text);
+        background: linear-gradient(180deg, #ffffff, #f9fbff 60%);
+      }
+
+      header {
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--border);
+        background: var(--bg);
+        position: sticky; top: 0; z-index: 10;
+      }
+      header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+      header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+
+      .wrap {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 16px;
+        padding: 16px;
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+      @media (max-width: 900px) {
+        .wrap { grid-template-columns: 1fr; }
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px;
+      }
+
+      .controls h2 {
+        margin: 0 0 8px;
+        font-size: 14px; font-weight: 600; color: var(--muted);
+      }
+      .control { margin: 10px 0 14px; }
+      .control label { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+      .control input[type="range"] { width: 100%; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .row .control { margin: 0 0 10px; }
+      .control input[type="number"] {
+        width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--text);
+      }
+
+      .buttons { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+      button {
+        padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); cursor: pointer; background: #fff; color: var(--text);
+      }
+      button.primary { background: var(--accent); color: white; border-color: #1d4ed8; }
+      button:active { transform: translateY(1px); }
+
+      .legend { display: flex; gap: 14px; align-items: center; font-size: 13px; color: var(--muted); margin-top: 6px; }
+      .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+      .dot.red { background: var(--red); }
+      .dot.blue { background: var(--blue); }
+
+      .canvas-panel { position: relative; overflow: hidden; }
+      /* Only the main plot gets large height */
+      #plot { width: 100%; height: min(70vh, 720px); display: block; background: #fff; border-radius: 10px; border: 1px solid var(--border); }
+      /* Network diagram canvas in the sidebar */
+      #net { width: 100%; height: 260px; display: block; background: #fff; border-radius: 10px; border: 1px solid var(--border); }
+      .caption { font-size: 12px; color: var(--muted); margin-top: 8px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Encircling Classes Dataset</h1>
+      <p>Red ring encircles blue cluster. Tweak noise for mixing.</p>
+    </header>
+
+    <main class="wrap">
+      <section class="panel controls">
+        <h2>Parameters</h2>
+
+        <!-- Fixed sample sizes: 400 blue + 400 red -->
+
+        <div class="control">
+          <label>
+            <span>Inner spread (blue σ)</span>
+            <span><output id="innerSigmaOut">0.25</output></span>
+          </label>
+          <input id="innerSigma" type="range" min="0.05" max="0.7" step="0.01" value="0.25">
+        </div>
+
+        <div class="control">
+          <label>
+            <span>Ring radius (red R)</span>
+            <span><output id="ringRadiusOut">1.20</output></span>
+          </label>
+          <input id="ringRadius" type="range" min="0.4" max="3.0" step="0.01" value="1.2">
+        </div>
+
+        <div class="control">
+          <label>
+            <span>Ring thickness (red σ)</span>
+            <span><output id="ringSigmaOut">0.20</output></span>
+          </label>
+          <input id="ringSigma" type="range" min="0.05" max="0.7" step="0.01" value="0.20">
+        </div>
+
+        <div class="control">
+          <label>
+            <span>Label noise (%)</span>
+            <span><output id="labelNoiseOut">5</output></span>
+          </label>
+          <input id="labelNoise" type="range" min="0" max="25" step="1" value="5">
+        </div>
+
+        <div class="buttons">
+          <button id="regen" class="primary">Regenerate</button>
+          <button id="shuffle">Shuffle Labels</button>
+          <button id="export">Export JSON</button>
+        </div>
+
+        <div class="legend">
+          <span class="dot red"></span> Red (class 1)
+          <span class="dot blue"></span> Blue (class 0)
+        </div>
+
+        <hr style="border:none;border-top:1px solid var(--border);margin:14px 0;" />
+        <h2>Training (FFN)</h2>
+        <div class="control">
+          <label>
+            <span>Learning rate</span>
+            <span><output id="lrOut">0.05</output></span>
+          </label>
+          <input id="lr" type="range" min="0.001" max="1.0" step="0.001" value="0.05">
+        </div>
+        <div class="control">
+          <label>
+            <span>Steps / frame</span>
+            <span><output id="spfOut">10</output></span>
+          </label>
+          <input id="stepsPerFrame" type="range" min="1" max="500" step="1" value="10">
+        </div>
+        <div class="control">
+          <label>
+            <span>Hidden layers (sizes)</span>
+            <span><output id="archLabel">2 → 1</output></span>
+          </label>
+          <input id="hiddenSizes" type="text" placeholder="e.g., 8,8 or 16" value="">
+        </div>
+        <div class="buttons">
+          <button id="startStop" class="primary">Start Training</button>
+          <button id="resetModel">Reset Model</button>
+          <button id="applyArch">Apply Architecture</button>
+        </div>
+
+        <hr style="border:none;border-top:1px solid var(--border);margin:14px 0;" />
+        <h2>Network</h2>
+        <canvas id="net" width="600" height="400" aria-label="Network graph"></canvas>
+        <div class="caption">Lines: red=positive, blue=negative; thickness∝|weight|.</div>
+      </section>
+
+      <section class="panel canvas-panel">
+        <canvas id="plot" width="1200" height="800" aria-label="Dataset plot"></canvas>
+        <div class="caption">
+          Axes are scaled to fit current parameters. Points render at device pixel ratio for crispness.
+          <div id="status" style="margin-top:6px">
+            <span>Step: <strong id="stepOut">0</strong></span>
+            <span style="margin-left:12px">Loss: <strong id="lossOut">–</strong></span>
+            <span style="margin-left:12px">Acc: <strong id="accOut">–</strong></span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const rnd = {
+        normal(mean = 0, std = 1) {
+          let u = 0, v = 0;
+          while (u === 0) u = Math.random();
+          while (v === 0) v = Math.random();
+          const mag = Math.sqrt(-2.0 * Math.log(u));
+          const z0 = mag * Math.cos(2 * Math.PI * v);
+          return z0 * std + mean;
+        },
+        normalPos(mean, std) {
+          let r = this.normal(mean, std);
+          if (r < 0) r = Math.abs(r);
+          return r;
+        },
+        uniform(a = 0, b = 1) {
+          return a + (b - a) * Math.random();
+        }
+      };
+
+      function generateEncirclingDataset(cfg) {
+        const { innerSigma, ringRadius, ringSigma, labelNoise } = cfg;
+        const pts = [];
+        const blueCount = 400;
+        const redCount = 400;
+
+        for (let i = 0; i < blueCount; i++) {
+          const x = rnd.normal(0, innerSigma);
+          const y = rnd.normal(0, innerSigma);
+          pts.push({ x, y, label: 0 });
+        }
+
+        for (let i = 0; i < redCount; i++) {
+          const theta = rnd.uniform(0, 2 * Math.PI);
+          const r = Math.max(0.02, rnd.normalPos(ringRadius, ringSigma));
+          const x = r * Math.cos(theta);
+          const y = r * Math.sin(theta);
+          pts.push({ x, y, label: 1 });
+        }
+
+        const flipProb = Math.max(0, Math.min(1, labelNoise));
+        if (flipProb > 0) {
+          for (const p of pts) {
+            if (Math.random() < flipProb) p.label = 1 - p.label;
+          }
+        }
+
+        // Shuffle for nicer rendering and future batching
+        for (let i = pts.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [pts[i], pts[j]] = [pts[j], pts[i]];
+        }
+        return pts;
+      }
+
+      function calcDomain({ innerSigma, ringRadius, ringSigma }) {
+        const maxBlue = 4 * innerSigma;
+        const maxRed = ringRadius + 4 * ringSigma;
+        const m = Math.max(maxBlue, maxRed) * 1.1;
+        return { minX: -m, maxX: m, minY: -m, maxY: m };
+      }
+
+      function makeScaler(canvas, domain) {
+        const { minX, maxX, minY, maxY } = domain;
+        const pad = 18; // px padding
+        const w = canvas.width - 2 * pad;
+        const h = canvas.height - 2 * pad;
+        const sx = w / (maxX - minX);
+        const sy = h / (maxY - minY);
+        const s = Math.min(sx, sy);
+        const cx = pad - minX * s + (w - (maxX - minX) * s) / 2;
+        const cy = pad + h - (-minY) * s - (h - (maxY - minY) * s) / 2;
+        return {
+          toPx(pt) {
+            return { x: Math.round(cx + pt.x * s), y: Math.round(cy - pt.y * s) };
+          },
+          toData(pxPt) {
+            return { x: (pxPt.x - cx) / s, y: (cy - pxPt.y) / s };
+          },
+          s, cx, cy
+        };
+      }
+
+      function setupHiDPI(canvas) {
+        const dpr = Math.max(1, window.devicePixelRatio || 1);
+        const rectW = canvas.clientWidth;
+        const rectH = canvas.clientHeight;
+        if (!rectW || !rectH) return dpr;
+        if (canvas.width !== Math.floor(rectW * dpr) || canvas.height !== Math.floor(rectH * dpr)) {
+          canvas.width = Math.floor(rectW * dpr);
+          canvas.height = Math.floor(rectH * dpr);
+        }
+        return dpr;
+      }
+
+      function drawAxes(ctx, canvas, scaler, domain, dpr) {
+        ctx.save();
+        ctx.scale(1, 1);
+        ctx.lineWidth = 1 * dpr;
+        ctx.strokeStyle = '#e5e7eb';
+        ctx.fillStyle = '#9ca3af';
+        // light grid
+        ctx.beginPath();
+        const step = 1;
+        for (let x = Math.ceil(domain.minX); x <= domain.maxX; x += step) {
+          const p1 = scaler.toPx({ x, y: domain.minY });
+          const p2 = scaler.toPx({ x, y: domain.maxY });
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+        }
+        for (let y = Math.ceil(domain.minY); y <= domain.maxY; y += step) {
+          const p1 = scaler.toPx({ x: domain.minX, y });
+          const p2 = scaler.toPx({ x: domain.maxX, y });
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+        }
+        ctx.stroke();
+
+        // axes
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.beginPath();
+        const x0a = scaler.toPx({ x: domain.minX, y: 0 });
+        const x0b = scaler.toPx({ x: domain.maxX, y: 0 });
+        const y0a = scaler.toPx({ x: 0, y: domain.minY });
+        const y0b = scaler.toPx({ x: 0, y: domain.maxY });
+        ctx.moveTo(x0a.x, x0a.y); ctx.lineTo(x0b.x, x0b.y);
+        ctx.moveTo(y0a.x, y0a.y); ctx.lineTo(y0b.x, y0b.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function drawDecisionField(ctx, canvas, scaler, domain) {
+        const dpr = Math.max(1, window.devicePixelRatio || 1);
+        const cell = Math.max(4, Math.round(6 * dpr));
+        ctx.save();
+        for (let y = 0; y < canvas.height; y += cell) {
+          for (let x = 0; x < canvas.width; x += cell) {
+            const pData = scaler.toData({ x, y });
+            const prob = predictXY(pData.x, pData.y);
+            const isPos = prob >= 0.5;
+            ctx.fillStyle = isPos ? 'rgba(225, 29, 72, 0.12)' : 'rgba(37, 99, 235, 0.12)';
+            ctx.fillRect(x, y, cell, cell);
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawDecisionBoundary(ctx, scaler, domain, dpr) {
+        // Draw non-linear 0.5 contour using marching squares
+        if (!model) return;
+        const dprLocal = Math.max(1, window.devicePixelRatio || 1);
+        const baseCell = Math.max(4, Math.round(6 * dprLocal));
+        const cell = baseCell * 2;
+        const width = ctx.canvas.width;
+        const height = ctx.canvas.height;
+
+        function val(px, py) {
+          const p = scaler.toData({ x: px, y: py });
+          return predictXY(p.x, p.y) - 0.5;
+        }
+
+        function interp(x1, y1, v1, x2, y2, v2) {
+          const t = v1 / (v1 - v2);
+          return { x: x1 + t * (x2 - x1), y: y1 + t * (y2 - y1) };
+        }
+
+        ctx.save();
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = Math.max(1, 2 * (dpr || 1));
+
+        for (let y = 0; y < height - cell; y += cell) {
+          for (let x = 0; x < width - cell; x += cell) {
+            const x0 = x, x1 = x + cell; const y0 = y, y1 = y + cell;
+            const f00 = val(x0, y0); // TL
+            const f10 = val(x1, y0); // TR
+            const f11 = val(x1, y1); // BR
+            const f01 = val(x0, y1); // BL
+
+            const points = [];
+            if ((f00 > 0) !== (f10 > 0)) points.push(interp(x0, y0, f00, x1, y0, f10)); // top
+            if ((f10 > 0) !== (f11 > 0)) points.push(interp(x1, y0, f10, x1, y1, f11)); // right
+            if ((f11 > 0) !== (f01 > 0)) points.push(interp(x1, y1, f11, x0, y1, f01)); // bottom
+            if ((f01 > 0) !== (f00 > 0)) points.push(interp(x0, y1, f01, x0, y0, f00)); // left
+
+            if (points.length === 2) {
+              ctx.beginPath();
+              ctx.moveTo(points[0].x, points[0].y);
+              ctx.lineTo(points[1].x, points[1].y);
+              ctx.stroke();
+            } else if (points.length === 4) {
+              ctx.beginPath();
+              ctx.moveTo(points[0].x, points[0].y); ctx.lineTo(points[1].x, points[1].y);
+              ctx.moveTo(points[2].x, points[2].y); ctx.lineTo(points[3].x, points[3].y);
+              ctx.stroke();
+            }
+          }
+        }
+        ctx.restore();
+      }
+
+      function render(canvas, pts, domain) {
+        const dpr = setupHiDPI(canvas);
+        const ctx = canvas.getContext('2d');
+        const scaler = makeScaler(canvas, domain);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // background classification field first
+        drawDecisionField(ctx, canvas, scaler, domain);
+
+        drawAxes(ctx, canvas, scaler, domain, dpr);
+
+        const r = Math.max(2, Math.min(5, Math.round(3 * dpr)));
+        for (const p of pts) {
+          const { x, y } = scaler.toPx(p);
+          ctx.beginPath();
+          ctx.fillStyle = p.label === 1 ? 'rgba(225, 29, 72, 0.9)' : 'rgba(37, 99, 235, 0.9)';
+          ctx.arc(x, y, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // draw the decision boundary on top
+        drawDecisionBoundary(ctx, scaler, domain, dpr);
+      }
+
+      function qs(id) { return document.getElementById(id); }
+
+      const ui = {
+        innerSigma: qs('innerSigma'),
+        innerSigmaOut: qs('innerSigmaOut'),
+        ringRadius: qs('ringRadius'),
+        ringRadiusOut: qs('ringRadiusOut'),
+        ringSigma: qs('ringSigma'),
+        ringSigmaOut: qs('ringSigmaOut'),
+        labelNoise: qs('labelNoise'),
+        labelNoiseOut: qs('labelNoiseOut'),
+        regen: qs('regen'),
+        shuffle: qs('shuffle'),
+        exportBtn: qs('export'),
+        plot: qs('plot'),
+        net: qs('net'),
+        startStop: qs('startStop'),
+        resetModel: qs('resetModel'),
+        applyArch: qs('applyArch'),
+        lr: qs('lr'),
+        lrOut: qs('lrOut'),
+        stepsPerFrame: qs('stepsPerFrame'),
+        spfOut: qs('spfOut'),
+        stepOut: qs('stepOut'),
+        lossOut: qs('lossOut'),
+        accOut: qs('accOut'),
+        hiddenSizes: qs('hiddenSizes'),
+        archLabel: qs('archLabel'),
+      };
+
+      let dataset = [];
+      let domain = null;
+      let viz = null; // reserved for optional smoothing (unused)
+
+      // Configurable MLP (ReLU hidden layers + sigmoid output)
+      class MLPModel {
+        constructor(hiddenSizes = []) {
+          this.hidden = hiddenSizes.filter(n => Number.isFinite(n) && n > 0 && n <= 256).slice(0, 6);
+          this.sizes = [2, ...this.hidden, 1];
+          this.W = [];
+          this.b = [];
+          for (let l = 0; l < this.sizes.length - 1; l++) {
+            const fanIn = this.sizes[l];
+            const fanOut = this.sizes[l + 1];
+            const isOutput = l === this.sizes.length - 2;
+            const std = isOutput ? Math.sqrt(1 / fanIn) : Math.sqrt(2 / fanIn);
+            const Wl = new Array(fanOut);
+            for (let i = 0; i < fanOut; i++) {
+              Wl[i] = new Array(fanIn);
+              for (let j = 0; j < fanIn; j++) Wl[i][j] = rnd.normal(0, std);
+            }
+            const bl = new Array(fanOut).fill(0);
+            this.W.push(Wl); this.b.push(bl);
+          }
+        }
+        predict(x, y) {
+          let a = [x, y];
+          for (let l = 0; l < this.W.length; l++) {
+            const Wl = this.W[l], bl = this.b[l];
+            const z = new Array(Wl.length);
+            for (let i = 0; i < Wl.length; i++) {
+              let s = bl[i];
+              const row = Wl[i];
+              for (let j = 0; j < row.length; j++) s += row[j] * a[j];
+              z[i] = s;
+            }
+            if (l < this.W.length - 1) {
+              a = z.map(v => v > 0 ? v : 0);
+            } else {
+              const v = z[0];
+              return 1 / (1 + Math.exp(-v));
+            }
+          }
+          return 0.5;
+        }
+        stepFull(data, lr, weightDecay = 0) {
+          const gW = this.W.map(Wl => Wl.map(row => row.map(() => 0)));
+          const gb = this.b.map(bl => bl.map(() => 0));
+          let loss = 0;
+          const n = data.length;
+          for (let idx = 0; idx < n; idx++) {
+            const { x, y, label: t } = data[idx];
+            const a = []; // activations
+            const z = []; // pre-activations
+            a[0] = [x, y];
+            for (let l = 0; l < this.W.length; l++) {
+              const Wl = this.W[l], bl = this.b[l];
+              const zl = new Array(Wl.length);
+              for (let i = 0; i < Wl.length; i++) {
+                let s = bl[i];
+                const row = Wl[i];
+                const ap = a[l];
+                for (let j = 0; j < row.length; j++) s += row[j] * ap[j];
+                zl[i] = s;
+              }
+              z[l] = zl;
+              if (l < this.W.length - 1) a[l + 1] = zl.map(v => v > 0 ? v : 0);
+              else a[l + 1] = [1 / (1 + Math.exp(-zl[0]))];
+            }
+            const p = a[a.length - 1][0];
+            loss += - (t * Math.log(Math.max(1e-9, p)) + (1 - t) * Math.log(Math.max(1e-9, 1 - p)));
+            const dA = new Array(this.W.length + 1);
+            const dZ = new Array(this.W.length);
+            dA[this.W.length] = [p - t];
+            for (let l = this.W.length - 1; l >= 0; l--) {
+              const Wl = this.W[l];
+              const zl = z[l];
+              const alPrev = a[l];
+              const dZl = new Array(Wl.length);
+              if (l === this.W.length - 1) dZl[0] = dA[l + 1][0];
+              else {
+                const dAl = dA[l + 1];
+                for (let i = 0; i < zl.length; i++) dZl[i] = dAl[i] * (zl[i] > 0 ? 1 : 0);
+              }
+              dZ[l] = dZl;
+              for (let i = 0; i < Wl.length; i++) {
+                gb[l][i] += dZl[i];
+                for (let j = 0; j < Wl[i].length; j++) gW[l][i][j] += dZl[i] * alPrev[j];
+              }
+              if (l > 0) {
+                const dAprev = new Array(this.sizes[l]).fill(0);
+                for (let j = 0; j < this.sizes[l]; j++) {
+                  let s = 0; for (let i = 0; i < this.sizes[l + 1]; i++) s += Wl[i][j] * dZl[i];
+                  dAprev[j] = s;
+                }
+                dA[l] = dAprev;
+              }
+            }
+          }
+          for (let l = 0; l < this.W.length; l++) {
+            for (let i = 0; i < this.W[l].length; i++) {
+              gb[l][i] = gb[l][i] / n;
+              for (let j = 0; j < this.W[l][i].length; j++) gW[l][i][j] = gW[l][i][j] / n + weightDecay * this.W[l][i][j];
+            }
+          }
+          for (let l = 0; l < this.W.length; l++) {
+            for (let i = 0; i < this.W[l].length; i++) {
+              this.b[l][i] -= lr * gb[l][i];
+              for (let j = 0; j < this.W[l][i].length; j++) this.W[l][i][j] -= lr * gW[l][i][j];
+            }
+          }
+          return loss / n;
+        }
+      }
+
+      let model = null;
+      let running = false;
+      let step = 0;
+      let lossEMA = null;
+
+      function drawNetwork(canvas, model) {
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const dpr = setupHiDPI(canvas);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (!model) return;
+
+        const sizes = model.sizes || [2, 1];
+        const L = sizes.length;
+        const padX = 18 * dpr;
+        const padY = 12 * dpr;
+        const W = canvas.width - 2 * padX;
+        const H = canvas.height - 2 * padY;
+        const maxNodes = Math.max(...sizes);
+        const baseR = Math.max(3 * dpr, Math.min(10 * dpr, H / (2 * maxNodes + 6)));
+
+        const layersX = new Array(L).fill(0).map((_, l) => padX + (L === 1 ? W / 2 : (W * l) / (L - 1)));
+        const nodePos = [];
+        for (let l = 0; l < L; l++) {
+          const n = sizes[l];
+          const gap = H / (n + 1);
+          const xs = layersX[l];
+          const ys = new Array(n).fill(0).map((_, i) => padY + gap * (i + 1));
+          nodePos[l] = ys.map(y => ({ x: xs, y }));
+        }
+
+        // Draw edges with color by sign and thickness by magnitude
+        ctx.lineCap = 'round';
+        for (let l = 0; l < L - 1; l++) {
+          const Wl = model.W[l]; // shape [fanOut][fanIn]
+          // find max |w| for this layer for normalization
+          let maxAbs = 0;
+          for (let i = 0; i < Wl.length; i++) {
+            for (let j = 0; j < Wl[i].length; j++) maxAbs = Math.max(maxAbs, Math.abs(Wl[i][j]));
+          }
+          const denom = maxAbs > 0 ? maxAbs : 1;
+          for (let i = 0; i < Wl.length; i++) {
+            const to = nodePos[l + 1][i];
+            for (let j = 0; j < Wl[i].length; j++) {
+              const from = nodePos[l][j];
+              const w = Wl[i][j];
+              const norm = Math.min(1, Math.abs(w) / denom);
+              const width = (0.5 + 2.5 * norm) * dpr;
+              ctx.lineWidth = width;
+              const isPos = w >= 0;
+              ctx.strokeStyle = isPos ? '#e11d48' : '#2563eb';
+              ctx.globalAlpha = 0.25 + 0.65 * norm;
+              ctx.beginPath();
+              ctx.moveTo(from.x, from.y);
+              ctx.lineTo(to.x, to.y);
+              ctx.stroke();
+            }
+          }
+        }
+        ctx.globalAlpha = 1;
+
+        // Draw nodes
+        for (let l = 0; l < L; l++) {
+          const n = sizes[l];
+          for (let i = 0; i < n; i++) {
+            const p = nodePos[l][i];
+            ctx.beginPath();
+            ctx.fillStyle = '#ffffff';
+            ctx.strokeStyle = '#cbd5e1';
+            ctx.lineWidth = 1.5 * dpr;
+            ctx.arc(p.x, p.y, baseR, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          }
+        }
+      }
+
+      function parseHiddenSizes() {
+        const raw = (ui.hiddenSizes && ui.hiddenSizes.value || '').trim();
+        if (!raw) return [];
+        return raw.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isFinite(n) && n > 0);
+      }
+
+      function updateArchLabel(hidden) {
+        const middle = hidden.length ? hidden.join(' → ') : '';
+        if (ui.archLabel) ui.archLabel.textContent = middle ? `2 → ${middle} → 1` : '2 → 1';
+      }
+
+      function resetModel() {
+        const hidden = parseHiddenSizes();
+        updateArchLabel(hidden);
+        model = new MLPModel(hidden);
+        step = 0;
+        lossEMA = null;
+        updateStatus(0, null, null);
+        render(ui.plot, dataset, domain);
+        drawNetwork(ui.net, model);
+      }
+
+      function readConfig() {
+        return {
+          innerSigma: parseFloat(ui.innerSigma.value),
+          ringRadius: parseFloat(ui.ringRadius.value),
+          ringSigma: parseFloat(ui.ringSigma.value),
+          labelNoise: parseInt(ui.labelNoise.value, 10) / 100,
+        };
+      }
+
+      function syncOutputs() {
+        ui.innerSigmaOut.textContent = Number(ui.innerSigma.value).toFixed(2);
+        ui.ringRadiusOut.textContent = Number(ui.ringRadius.value).toFixed(2);
+        ui.ringSigmaOut.textContent = Number(ui.ringSigma.value).toFixed(2);
+        ui.labelNoiseOut.textContent = ui.labelNoise.value;
+      }
+
+      function regenerateAndRender() {
+        syncOutputs();
+        const cfg = readConfig();
+        domain = calcDomain(cfg);
+        dataset = generateEncirclingDataset(cfg);
+        render(ui.plot, dataset, domain);
+        drawNetwork(ui.net, model);
+      }
+
+      // event wiring
+      ['innerSigma','ringRadius','ringSigma','labelNoise'].forEach(id => {
+        ui[id].addEventListener('input', () => regenerateAndRender());
+      });
+      ui.regen.addEventListener('click', () => regenerateAndRender());
+      ui.shuffle.addEventListener('click', () => {
+        if (!dataset.length) return;
+        // flip a small portion (5%) for a quick mix
+        const k = Math.max(1, Math.floor(dataset.length * 0.05));
+        for (let i = 0; i < k; i++) {
+          const j = Math.floor(Math.random() * dataset.length);
+          dataset[j].label = 1 - dataset[j].label;
+        }
+        const domain = calcDomain(readConfig());
+        render(ui.plot, dataset, domain);
+      });
+      ui.exportBtn.addEventListener('click', () => {
+        const blob = new Blob([JSON.stringify(dataset)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'encircling_dataset.json';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      });
+
+      function updateStatus(stepVal, lossVal, accVal) {
+        ui.stepOut.textContent = stepVal.toString();
+        ui.lossOut.textContent = lossVal == null ? '–' : lossVal.toFixed(4);
+        ui.accOut.textContent = accVal == null ? '–' : (accVal * 100).toFixed(1) + '%';
+      }
+
+      function estimateAccuracy(sampleN = 512) {
+        if (!dataset.length || !model) return null;
+        let correct = 0;
+        const n = Math.min(sampleN, dataset.length);
+        for (let i = 0; i < n; i++) {
+          const j = Math.floor(Math.random() * dataset.length);
+          const p = dataset[j];
+          const prob = model.predict(p.x, p.y);
+          const yhat = prob >= 0.5 ? 1 : 0;
+          if (yhat === p.label) correct++;
+        }
+        return correct / n;
+      }
+
+      function predictXY(x, y) { return model ? model.predict(x, y) : 0.5; }
+
+      function trainTick() {
+        if (!running || !model || !dataset.length) return;
+        const lr = parseFloat(ui.lr.value);
+        const spf = parseInt(ui.stepsPerFrame.value, 10);
+        const weightDecay = 0; // pure vanilla GD
+        let lossSum = 0;
+        for (let i = 0; i < spf; i++) {
+          lossSum += model.stepFull(dataset, lr, weightDecay);
+          step++;
+        }
+        const avgLoss = lossSum / spf;
+        lossEMA = lossEMA == null ? avgLoss : 0.9 * lossEMA + 0.1 * avgLoss;
+        const acc = estimateAccuracy(256);
+        updateStatus(step, lossEMA, acc);
+        render(ui.plot, dataset, domain);
+        drawNetwork(ui.net, model);
+      }
+
+      function animLoop() {
+        if (running) trainTick();
+        requestAnimationFrame(animLoop);
+      }
+
+      ui.lr.addEventListener('input', () => {
+        ui.lrOut.textContent = parseFloat(ui.lr.value).toFixed(2);
+      });
+      ui.stepsPerFrame.addEventListener('input', () => {
+        ui.spfOut.textContent = ui.stepsPerFrame.value;
+      });
+      ui.startStop.addEventListener('click', () => {
+        running = !running;
+        ui.startStop.textContent = running ? 'Pause Training' : 'Start Training';
+      });
+      ui.resetModel.addEventListener('click', () => resetModel());
+      if (ui.applyArch) ui.applyArch.addEventListener('click', () => resetModel());
+
+      window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') { e.preventDefault(); ui.startStop.click(); }
+      });
+
+      window.addEventListener('resize', () => { regenerateAndRender(); drawNetwork(ui.net, model); });
+      // initial draw
+      regenerateAndRender();
+      resetModel();
+      ui.lrOut.textContent = parseFloat(ui.lr.value).toFixed(2);
+      ui.spfOut.textContent = ui.stepsPerFrame.value;
+      updateArchLabel(parseHiddenSizes());
+      drawNetwork(ui.net, model);
+      requestAnimationFrame(animLoop);
+    </script>
+  </body>
+  </html>
